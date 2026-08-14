@@ -53,12 +53,42 @@ jobs:
           "harness-ref=$($lock.harness.commit)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Check out pinned DeepSeek Harness
+        if: vars.WINDOWS_HARNESS_MIRROR == ''
         uses: actions/checkout@v7
         with:
           repository: deepseek-ai/deepseek-harness
           ref: ${{ steps.runtime-lock.outputs.harness-ref }}
           clean: false
           path: deepseek-harness
+
+      - name: Stage pinned DeepSeek Harness from local mirror
+        if: vars.WINDOWS_HARNESS_MIRROR != ''
+        shell: powershell
+        env:
+          HARNESS_MIRROR: ${{ vars.WINDOWS_HARNESS_MIRROR }}
+          HARNESS_REF: ${{ steps.runtime-lock.outputs.harness-ref }}
+        run: |
+          $source = [IO.Path]::GetFullPath($env:HARNESS_MIRROR)
+          $target = Join-Path $env:GITHUB_WORKSPACE 'deepseek-harness'
+          if (-not (Test-Path -LiteralPath (Join-Path $source '.git'))) {
+            throw "Configured Windows Harness mirror is not a Git checkout: $source"
+          }
+          git -C $source cat-file -e "${env:HARNESS_REF}^{commit}"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Harness mirror does not contain pinned commit $env:HARNESS_REF."
+          }
+          if (Test-Path -LiteralPath $target) {
+            throw "Harness staging target already exists: $target"
+          }
+          git clone --no-checkout --local -- $source $target
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to clone the local Harness mirror.' }
+          git -C $target checkout --detach $env:HARNESS_REF
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to check out the pinned Harness commit.' }
+          $actual = git -C $target rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $env:HARNESS_REF) {
+            throw "Staged Harness commit $actual does not match $env:HARNESS_REF."
+          }
+          git -C $target remote set-url origin https://github.com/deepseek-ai/deepseek-harness.git
 
       - name: Enable pnpm
         shell: powershell
