@@ -54,7 +54,7 @@ jobs:
           if (-not $certificate) {
             throw 'The pinned AstraClaw Team Certum certificate is not exposed by SimplySign.'
           }
-          $ekuOids = @($certificate.EnhancedKeyUsageList | ForEach-Object { $_.ObjectId.Value })
+          $ekuOids = @($certificate.EnhancedKeyUsageList | ForEach-Object { [string]$_.ObjectId })
           if (-not $certificate.HasPrivateKey -or $ekuOids -notcontains $codeSigningOid -or $certificate.NotAfter -le (Get-Date)) {
             throw 'The pinned SimplySign certificate is not an active code-signing identity with a private key.'
           }
