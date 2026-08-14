@@ -38,11 +38,11 @@ jobs:
           node-version: '24'
 
       - name: Enable pnpm
-        shell: pwsh
+        shell: powershell
         run: corepack enable; corepack prepare pnpm@11.7.0 --activate
 
       - name: Verify SimplySign Desktop session
-        shell: pwsh
+        shell: powershell
         run: |
           $desktop = Get-Process SimplySignDesktop -ErrorAction SilentlyContinue
           if (-not $desktop) {
@@ -73,18 +73,18 @@ jobs:
           "SIGNTOOL_PATH=$signTool" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Install DeepSeek Harness dependencies
-        shell: pwsh
+        shell: powershell
         working-directory: deepseek-harness
         run: pnpm install --frozen-lockfile
 
       - name: Install DeepSeek Work dependencies
-        shell: pwsh
+        shell: powershell
         working-directory: deepseek-work
         run: pnpm install --frozen-lockfile
 
       - name: Check release tag
         if: startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
+        shell: powershell
         working-directory: deepseek-work
         run: |
           $version = (Get-Content -Raw -Encoding UTF8 package.json | ConvertFrom-Json).version
@@ -93,12 +93,12 @@ jobs:
           }
 
       - name: Check
-        shell: pwsh
+        shell: powershell
         working-directory: deepseek-work
         run: pnpm run check
 
       - name: Build, sign, and verify Windows release
-        shell: pwsh
+        shell: powershell
         working-directory: deepseek-work
         run: pnpm run release:win
 
