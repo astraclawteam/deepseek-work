@@ -110,6 +110,10 @@ jobs:
         run: |
           $env:Path = "$env:NODEJS_HOME;$env:Path"
           node --version
+          $nodeShim = Join-Path $PWD 'node_modules\.bin\node.cmd'
+          $nodeShimContents = "@echo off`r`n`"$env:NODEJS_HOME\node.exe`" %*`r`n"
+          [IO.File]::WriteAllText($nodeShim, $nodeShimContents, [Text.Encoding]::ASCII)
+          & $nodeShim --version
           pnpm run release:win
 
       - name: Upload signed Windows artifact
