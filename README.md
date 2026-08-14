@@ -34,7 +34,7 @@ pnpm run smoke:packaged
 pnpm run dist:win
 ```
 
-`pnpm run pack:win` creates `release/win-unpacked`; `pnpm run dist:win` creates an unsigned local NSIS installer. Both include Harness and Node, so end users do not need a source checkout, Node, pnpm, or a first-launch runtime download. Official builds use `pnpm run release:win`, which requires the AstraClaw Team EV Sign identity and rejects the release unless the application and installer have the expected Authenticode publisher and timestamp. See [Windows code signing](docs/code-signing.md).
+`pnpm run pack:win` creates `release/win-unpacked`; `pnpm run dist:win` creates an unsigned local NSIS installer. Both include Harness and Node, so end users do not need a source checkout, Node, pnpm, or a first-launch runtime download. Official builds use `pnpm run release:win` on an interactive Windows self-hosted runner connected to the AstraClaw Team certificate through SimplySign Desktop. The release is rejected unless the application and installer have the expected Authenticode publisher and timestamp. See [Windows code signing](docs/code-signing.md).
 
 ## Verification
 

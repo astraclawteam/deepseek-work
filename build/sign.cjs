@@ -15,14 +15,22 @@ function isSignTarget(filename) {
     || /^deepseek-work-setup-.+\.exe$/u.test(normalized)
 }
 
+function findSignTool() {
+  const candidates = [
+    process.env.SIGNTOOL_PATH,
+    'C:\\Program Files (x86)\\Windows Kits\\10\\App Certification Kit\\signtool.exe',
+  ].filter(Boolean)
+  return candidates.find(candidate => existsSync(candidate))
+}
+
 function signingConfiguration() {
-  const cli = process.env.EVSIGN_CLI?.trim()
-  const key = process.env.EVSIGN_KEY?.trim()
-  if (cli && key && existsSync(cli)) return { cli, key }
+  const signTool = findSignTool()
+  const thumbprint = process.env.WIN_CSC_SHA1?.replaceAll(/\s/gu, '')
+  if (signTool && thumbprint) return { signTool, thumbprint }
 
   if (process.env.REQUIRE_CODE_SIGNING === '1') {
     throw new Error(
-      `Code signing is required but EV Sign is incomplete (CLI=${cli && existsSync(cli) ? 'ok' : 'missing'}, key=${key ? 'ok' : 'missing'}).`,
+      `Code signing is required but SimplySign is incomplete (SignTool=${signTool ? 'ok' : 'missing'}, certificate=${thumbprint ? 'ok' : 'missing'}).`,
     )
   }
   return undefined
@@ -74,32 +82,39 @@ function signFile({ filePath, filename }) {
     return
   }
 
+  const timestampServer = process.env.TIMESTAMP_SERVER?.trim() || 'http://time.certum.pl'
   let lastFailure = ''
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    console.log(`  EV Sign: ${filename}${attempt > 1 ? ` (attempt ${attempt}/${MAX_ATTEMPTS})` : ''}`)
-    let output = ''
+    console.log(`  SimplySign/SignTool: ${filename}${attempt > 1 ? ` (attempt ${attempt}/${MAX_ATTEMPTS})` : ''}`)
     try {
-      output = execFileSync(configuration.cli, [filePath, '-key', configuration.key], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
+      execFileSync(configuration.signTool, [
+        'sign',
+        '/sha1',
+        configuration.thumbprint,
+        '/fd',
+        'SHA256',
+        '/tr',
+        timestampServer,
+        '/td',
+        'SHA256',
+        '/v',
+        filePath,
+      ], {
+        stdio: 'inherit',
         timeout: 600_000,
         windowsHide: true,
       })
-      if (/签名完成/u.test(output) && !/签名失败/u.test(output)) {
-        verifySignedFile(filePath)
-        console.log(`  signed and verified: ${filename}`)
-        return
-      }
+      verifySignedFile(filePath)
+      console.log(`  signed and verified: ${filename}`)
+      return
     } catch (error) {
-      output = `${error.stdout ?? ''}${error.stderr ?? ''}${error.message ?? ''}`
+      lastFailure = String(error.message ?? error).slice(-300).replace(/\s+/gu, ' ').trim()
     }
-
-    lastFailure = output.slice(-300).replace(/\s+/gu, ' ').trim()
     if (attempt < MAX_ATTEMPTS) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, RETRY_DELAY_MS)
     }
   }
-  throw new Error(`EV Sign failed for ${filename} after ${MAX_ATTEMPTS} attempts: ${lastFailure}`)
+  throw new Error(`SimplySign/SignTool failed for ${filename} after ${MAX_ATTEMPTS} attempts: ${lastFailure}`)
 }
 
 exports.default = async function sign(configuration) {

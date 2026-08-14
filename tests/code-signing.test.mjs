@@ -21,21 +21,17 @@ describe('Windows code signing scope', () => {
 
   it('fails closed when a formal release has no signing credential', async () => {
     const previousRequired = process.env.REQUIRE_CODE_SIGNING
-    const previousCli = process.env.EVSIGN_CLI
-    const previousKey = process.env.EVSIGN_KEY
+    const previousThumbprint = process.env.WIN_CSC_SHA1
     process.env.REQUIRE_CODE_SIGNING = '1'
-    delete process.env.EVSIGN_CLI
-    delete process.env.EVSIGN_KEY
+    delete process.env.WIN_CSC_SHA1
     try {
       await expect(sign({ path: join(import.meta.dirname, 'DeepSeek Work.exe') }))
         .rejects.toThrow('Code signing is required')
     } finally {
       if (previousRequired === undefined) delete process.env.REQUIRE_CODE_SIGNING
       else process.env.REQUIRE_CODE_SIGNING = previousRequired
-      if (previousCli === undefined) delete process.env.EVSIGN_CLI
-      else process.env.EVSIGN_CLI = previousCli
-      if (previousKey === undefined) delete process.env.EVSIGN_KEY
-      else process.env.EVSIGN_KEY = previousKey
+      if (previousThumbprint === undefined) delete process.env.WIN_CSC_SHA1
+      else process.env.WIN_CSC_SHA1 = previousThumbprint
     }
   })
 })
