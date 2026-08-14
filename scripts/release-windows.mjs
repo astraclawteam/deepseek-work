@@ -1,9 +1,20 @@
 import { execFileSync } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { releaseCacheRoot, resolveElectronDistribution } from './electron-distribution.mjs'
 
 const repositoryRoot = resolve(import.meta.dirname, '..')
 const nodeExecutable = process.execPath
 const environment = environmentWithCurrentNode(process.env)
+const runtimeLock = JSON.parse(await readFile(join(repositoryRoot, 'runtime-lock.json'), 'utf8'))
+const electronDistribution = await resolveElectronDistribution({
+  repositoryRoot,
+  cacheRoot: releaseCacheRoot(repositoryRoot, environment),
+  localAppData: environment.LOCALAPPDATA,
+  configuredDistribution: environment.DEEPSEEK_WORK_ELECTRON_DIST?.trim(),
+  lock: runtimeLock,
+})
+console.log(`Using ${electronDistribution.source}: ${electronDistribution.path}`)
 
 const stages = [
   ['prepare desktop runtime', join(repositoryRoot, 'scripts', 'prepare-runtime.mjs'), []],
@@ -12,7 +23,7 @@ const stages = [
   [
     'build signed NSIS package',
     join(repositoryRoot, 'node_modules', 'electron-builder', 'out', 'cli', 'cli.js'),
-    ['--win', 'nsis', '--x64'],
+    ['--win', 'nsis', '--x64', `--config.electronDist=${electronDistribution.path}`],
   ],
   ['verify Authenticode signatures', join(repositoryRoot, 'scripts', 'verify-signatures.mjs'), []],
   ['smoke packaged application', join(repositoryRoot, 'scripts', 'smoke-packaged.mjs'), []],
