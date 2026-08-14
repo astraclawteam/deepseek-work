@@ -23,6 +23,7 @@ jobs:
       - name: Check out DeepSeek Work
         uses: actions/checkout@v7
         with:
+          clean: false
           path: deepseek-work
 
       - name: Check out pinned DeepSeek Harness
@@ -30,6 +31,7 @@ jobs:
         with:
           repository: deepseek-ai/deepseek-harness
           ref: 47f943859bef60e4160492346772ded9b24f765a
+          clean: false
           path: deepseek-harness
 
       - name: Set up Node.js
