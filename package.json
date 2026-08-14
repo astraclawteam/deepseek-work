@@ -1,8 +1,9 @@
 {
   "name": "deepseek-work",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "private": true,
   "description": "A supervised Electron desktop shell for DeepSeek Harness.",
+  "author": "AstraClaw Team",
   "license": "MIT",
   "type": "module",
   "main": "dist/main.js",
@@ -13,14 +14,26 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "pnpm run typecheck && pnpm run test",
-    "dev": "pnpm run build && electron .",
-    "smoke": "pnpm run build && electron . --smoke",
+    "dev": "pnpm run generate:assets && pnpm run build && electron .",
+    "dist:win": "pnpm run prepare:runtime && pnpm run generate:assets && pnpm run build && electron-builder --win nsis --x64",
+    "generate:assets": "node scripts/generate-assets.mjs",
+    "pack:win": "pnpm run prepare:runtime && pnpm run generate:assets && pnpm run build && electron-builder --win --x64 --dir",
+    "prepare:runtime": "node scripts/prepare-runtime.mjs",
+    "release:win": "pnpm run dist:win && pnpm run verify:signatures && pnpm run smoke:packaged",
+    "smoke": "pnpm run generate:assets && pnpm run build && electron . --smoke",
+    "smoke:packaged": "node scripts/smoke-packaged.mjs",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "verify:signatures": "node scripts/verify-signatures.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.10.0",
     "electron": "43.4.0",
+    "electron-builder": "26.15.3",
+    "extract-zip": "2.0.1",
+    "png-to-ico": "3.0.1",
+    "sharp": "0.34.5",
+    "tar": "7.5.11",
     "typescript": "6.0.3",
     "vitest": "4.1.10"
   }

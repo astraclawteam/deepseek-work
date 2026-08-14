@@ -2,6 +2,14 @@ node_modules/
 dist/
 coverage/
 release/
+.release-cache/
+build/runtime/
+build/icon.ico
+build/icon.png
+build/tray-icon.png
+build/splash-hero.webp
+build/installer-sidebar.bmp
+build/uninstaller-sidebar.bmp
 *.log
 .DS_Store
 Thumbs.db

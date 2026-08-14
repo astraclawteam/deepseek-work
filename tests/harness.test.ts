@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   HarnessReadyParser,
   locateHarnessRoot,
+  resolveHarnessEntrypoint,
   resolveHarnessNode,
 } from '../src/harness.js'
 
@@ -72,6 +73,38 @@ describe('resolveHarnessNode', () => {
 
   it('honors an explicit Node executable', () => {
     expect(resolveHarnessNode('/custom/node', true, '/resources', 'linux')).toBe('/custom/node')
+  })
+})
+
+describe('resolveHarnessEntrypoint', () => {
+  it('resolves a packaged built CLI without the tsx source launcher', () => {
+    const root = createTemporaryRoot()
+    const entry = join('node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+    mkdirSync(join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib'), { recursive: true })
+    writeManifest(root, 'deepseek-work-harness-runtime')
+    writeFileSync(join(root, entry), 'export {}\n', 'utf8')
+    writeFileSync(join(root, 'desktop-runtime.json'), JSON.stringify({
+      schemaVersion: 1,
+      upstreamPackage: '@deepseek-ai/dsh',
+      entry: entry.replaceAll('\\', '/'),
+    }), 'utf8')
+
+    expect(resolveHarnessEntrypoint(root)).toEqual({
+      entryScript: join(root, entry),
+      sourceLaunch: false,
+    })
+  })
+
+  it('rejects a packaged CLI entry that escapes the runtime root', () => {
+    const root = createTemporaryRoot()
+    writeManifest(root, 'deepseek-work-harness-runtime')
+    writeFileSync(join(root, 'desktop-runtime.json'), JSON.stringify({
+      schemaVersion: 1,
+      upstreamPackage: '@deepseek-ai/dsh',
+      entry: '../outside.js',
+    }), 'utf8')
+
+    expect(() => resolveHarnessEntrypoint(root)).toThrow('Invalid packaged Harness entry')
   })
 })
 

@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>DeepSeek Work</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      --ink: #101426;
+      --muted: #5f6880;
+      --line: rgba(77, 107, 254, 0.17);
+      --accent: #4d6bfe;
+      --accent-dark: #304bcc;
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body {
+      background: #eaf0ff url("../../build/splash-hero.webp") center / cover no-repeat;
+      color: var(--ink);
+      -webkit-app-region: drag;
+      user-select: none;
+    }
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background: linear-gradient(90deg, rgba(255,255,255,.94) 0%, rgba(255,255,255,.86) 38%, rgba(255,255,255,.22) 69%, rgba(4,18,66,.08) 100%);
+      pointer-events: none;
+    }
+    .shell {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: stretch;
+    }
+    .panel {
+      width: 520px;
+      padding: 54px 54px 42px;
+      display: flex;
+      flex-direction: column;
+    }
+    .brand { display: flex; align-items: center; gap: 17px; }
+    .brand img { width: 52px; height: 52px; display: block; }
+    .brand-copy { display: flex; flex-direction: column; gap: 3px; }
+    .brand-name { font-size: 28px; font-weight: 660; letter-spacing: -.03em; }
+    .brand-subtitle { color: var(--muted); font-size: 13px; letter-spacing: .09em; text-transform: uppercase; }
+    .intro { margin-top: 54px; }
+    h1 { margin: 0 0 10px; font-size: 24px; font-weight: 650; letter-spacing: -.025em; }
+    .detail { margin: 0; min-height: 46px; color: var(--muted); font-size: 14px; line-height: 1.7; }
+    .progress-track {
+      width: 100%;
+      height: 5px;
+      margin: 25px 0 24px;
+      overflow: hidden;
+      background: rgba(77,107,254,.12);
+      border-radius: 999px;
+    }
+    .progress {
+      width: 8%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--accent), #76a2ff);
+      box-shadow: 0 0 16px rgba(77,107,254,.38);
+      transition: width .45s cubic-bezier(.16,1,.3,1), background .2s;
+    }
+    .steps { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px; }
+    .step { display: flex; align-items: center; gap: 10px; color: #8991a6; font-size: 13px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #cfd5e3; transition: .25s; }
+    .step.active { color: var(--ink); }
+    .step.active .dot { background: var(--accent); box-shadow: 0 0 0 5px rgba(77,107,254,.11); animation: pulse 1.4s infinite; }
+    .step.done { color: #3a4b73; }
+    .step.done .dot { background: #6f84f8; }
+    @keyframes pulse { 50% { transform: scale(.72); opacity: .62; } }
+    .footer { margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end; color: #7d879e; font-size: 12px; }
+    .version { font-variant-numeric: tabular-nums; }
+    .error-box {
+      display: none;
+      margin-top: 18px;
+      padding: 13px 15px;
+      border: 1px solid rgba(190,38,63,.18);
+      border-radius: 10px;
+      background: rgba(255,245,247,.85);
+      color: #9b2239;
+      font-size: 13px;
+      line-height: 1.5;
+      -webkit-app-region: no-drag;
+    }
+    .error-box.visible { display: block; }
+    .actions { display: none; gap: 10px; margin-top: 16px; -webkit-app-region: no-drag; }
+    .actions.visible { display: flex; }
+    button {
+      border: 0;
+      border-radius: 9px;
+      padding: 9px 18px;
+      font: inherit;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .primary { background: var(--accent); color: white; }
+    .primary:hover { background: var(--accent-dark); }
+    .secondary { background: rgba(31,41,74,.08); color: #3f4961; }
+    .window-close {
+      position: fixed;
+      z-index: 3;
+      top: 14px;
+      right: 16px;
+      width: 34px;
+      height: 30px;
+      padding: 0;
+      color: rgba(255,255,255,.85);
+      background: rgba(10,22,63,.16);
+      font-size: 18px;
+      -webkit-app-region: no-drag;
+    }
+    .window-close:hover { background: rgba(185,32,54,.78); color: white; }
+  </style>
+</head>
+<body>
+  <button class="window-close" aria-label="退出" onclick="sendAction('quit')">×</button>
+  <main class="shell">
+    <section class="panel">
+      <div class="brand">
+        <img src="../../assets/brand/deepseek-logo.svg" alt="DeepSeek">
+        <div class="brand-copy">
+          <div class="brand-name">DeepSeek Work</div>
+          <div class="brand-subtitle">Harness Desktop</div>
+        </div>
+      </div>
+      <div class="intro">
+        <h1 id="headline">正在准备工作台</h1>
+        <p class="detail" id="detail">正在验证内置运行时，请稍候。</p>
+        <div class="progress-track"><div class="progress" id="progress"></div></div>
+        <div class="steps" id="steps">
+          <div class="step active" data-phase="verify"><span class="dot"></span><span>验证运行时</span></div>
+          <div class="step" data-phase="prepare"><span class="dot"></span><span>准备本地环境</span></div>
+          <div class="step" data-phase="launch"><span class="dot"></span><span>启动 Harness</span></div>
+          <div class="step" data-phase="connect"><span class="dot"></span><span>连接工作台</span></div>
+        </div>
+        <div class="error-box" id="error"></div>
+        <div class="actions" id="actions">
+          <button class="primary" onclick="sendAction('retry')">重试</button>
+          <button class="secondary" onclick="sendAction('quit')">退出</button>
+        </div>
+      </div>
+      <div class="footer"><span>本地运行 · 数据留在此设备</span><span class="version" id="version">v0.0.0</span></div>
+    </section>
+  </main>
+  <script>
+    const order = ['verify', 'prepare', 'launch', 'connect'];
+    window.setDesktopVersion = function(version) {
+      document.getElementById('version').textContent = 'v' + version;
+    };
+    window.setStartupState = function(state) {
+      const failed = state.phase === 'error';
+      document.getElementById('headline').textContent = failed ? '启动遇到问题' : '正在准备工作台';
+      document.getElementById('detail').textContent = state.detail;
+      const progress = document.getElementById('progress');
+      progress.style.width = Math.max(4, Math.min(100, state.progress)) + '%';
+      progress.style.background = failed ? '#be263f' : '';
+      const activeIndex = failed ? -1 : order.indexOf(state.phase);
+      document.querySelectorAll('.step').forEach(function(element, index) {
+        element.classList.toggle('active', index === activeIndex);
+        element.classList.toggle('done', activeIndex > index || (!failed && state.progress >= 100));
+      });
+      const error = document.getElementById('error');
+      error.textContent = state.error || '';
+      error.classList.toggle('visible', failed);
+      document.getElementById('actions').classList.toggle('visible', failed);
+    };
+    function sendAction(action) { console.info('__DEEPSEEK_WORK__:' + action); }
+  </script>
+</body>
+</html>

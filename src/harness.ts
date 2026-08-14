@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { request } from 'node:http'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, resolve, sep } from 'node:path'
 
 const HARNESS_PACKAGE_NAME = '@deepseek-ai/dsh-root'
 const DEFAULT_STARTUP_TIMEOUT_MS = 120_000
@@ -17,16 +17,29 @@ export interface HarnessLocatorOptions {
 
 export interface HarnessSupervisorOptions {
   dataRoot: string
+  entryScript?: string
   harnessRoot: string
   logger?: (source: 'stdout' | 'stderr', text: string) => void
   nodeExecutable: string
   onUnexpectedExit?: (description: string) => void
   platform?: NodeJS.Platform
+  sourceLaunch?: boolean
   startupTimeoutMs?: number
 }
 
 interface HarnessPackageJson {
   name?: unknown
+}
+
+interface DesktopRuntimeManifest {
+  entry?: unknown
+  schemaVersion?: unknown
+  upstreamPackage?: unknown
+}
+
+export interface HarnessEntrypoint {
+  entryScript: string
+  sourceLaunch: boolean
 }
 
 /** Parse the Harness URL line even when stdout splits it across chunks. */
@@ -65,6 +78,23 @@ export function locateHarnessRoot(options: HarnessLocatorOptions): string {
   )
 }
 
+/** Resolve the source CLI or the prebuilt CLI carried by a desktop package. */
+export function resolveHarnessEntrypoint(harnessRoot: string): HarnessEntrypoint {
+  const runtimeManifestPath = join(harnessRoot, 'desktop-runtime.json')
+  if (!existsSync(runtimeManifestPath)) {
+    const sourceEntry = join(harnessRoot, 'apps', 'cli', 'src', 'bin.ts')
+    if (!existsSync(sourceEntry)) throw new Error(`Harness source entry is missing: ${sourceEntry}`)
+    return { entryScript: sourceEntry, sourceLaunch: true }
+  }
+
+  const manifest = readDesktopRuntimeManifest(runtimeManifestPath)
+  const entryScript = resolve(harnessRoot, ...manifest.entry.split('/'))
+  if (!entryScript.startsWith(`${resolve(harnessRoot)}${sep}`) || !existsSync(entryScript)) {
+    throw new Error(`Packaged Harness entry is missing or leaves its runtime root: ${manifest.entry}`)
+  }
+  return { entryScript, sourceLaunch: false }
+}
+
 export function resolveHarnessNode(
   explicitNode: string | undefined,
   isPackaged: boolean,
@@ -87,9 +117,13 @@ export class HarnessSupervisor {
 
     mkdirSync(this.options.dataRoot, { recursive: true })
     const platform = this.options.platform ?? process.platform
+    const entry = this.options.entryScript ?? join(this.options.harnessRoot, 'apps', 'cli', 'src', 'bin.ts')
+    const launchArguments = this.options.sourceLaunch === false
+      ? [entry, 'web', '--host', '127.0.0.1', '--port', '0']
+      : ['--import', 'tsx/esm', entry, 'web', '--host', '127.0.0.1', '--port', '0']
     const child = spawn(
       this.options.nodeExecutable,
-      ['--import', 'tsx/esm', 'apps/cli/src/bin.ts', 'web', '--host', '127.0.0.1', '--port', '0'],
+      launchArguments,
       {
         cwd: this.options.harnessRoot,
         detached: platform !== 'win32',
@@ -171,10 +205,29 @@ function isHarnessRoot(candidate: string): boolean {
   if (!existsSync(join(candidate, 'package.json'))) return false
   try {
     const manifest = JSON.parse(readFileSync(join(candidate, 'package.json'), 'utf8')) as HarnessPackageJson
-    return manifest.name === HARNESS_PACKAGE_NAME
+    if (manifest.name === HARNESS_PACKAGE_NAME) return true
+    const runtimeManifest = join(candidate, 'desktop-runtime.json')
+    if (!existsSync(runtimeManifest)) return false
+    readDesktopRuntimeManifest(runtimeManifest)
+    return true
   } catch {
     return false
   }
+}
+
+function readDesktopRuntimeManifest(file: string): { entry: string } {
+  const manifest = JSON.parse(readFileSync(file, 'utf8')) as DesktopRuntimeManifest
+  if (manifest.schemaVersion !== 1 || manifest.upstreamPackage !== '@deepseek-ai/dsh') {
+    throw new Error(`Unsupported packaged Harness manifest: ${file}`)
+  }
+  if (typeof manifest.entry !== 'string' || manifest.entry === '' || isAbsolute(manifest.entry)) {
+    throw new Error(`Invalid packaged Harness entry in ${file}`)
+  }
+  const segments = manifest.entry.split('/')
+  if (segments.some(segment => segment === '' || segment === '.' || segment === '..')) {
+    throw new Error(`Invalid packaged Harness entry in ${file}`)
+  }
+  return { entry: manifest.entry }
 }
 
 function assertHarnessRoot(candidate: string, source: string): void {

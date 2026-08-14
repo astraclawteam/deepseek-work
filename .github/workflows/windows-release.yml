@@ -1,0 +1,106 @@
+name: windows-release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      REQUIRE_CODE_SIGNING: '1'
+      EVSIGN_KEY: ${{ secrets.EVSIGN_KEY }}
+    steps:
+      - name: Check out DeepSeek Work
+        uses: actions/checkout@v7
+        with:
+          path: deepseek-work
+
+      - name: Check out pinned DeepSeek Harness
+        uses: actions/checkout@v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 47f943859bef60e4160492346772ded9b24f765a
+          path: deepseek-harness
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Enable pnpm
+        shell: pwsh
+        run: corepack enable; corepack prepare pnpm@11.7.0 --activate
+
+      - name: Prepare pinned EV Sign client
+        shell: pwsh
+        env:
+          EVSIGN_CLI_URL: https://mc.evsign.cn/evsign-client-cli-windows-latest
+          EVSIGN_CLI_SHA256: B1B2168A1D0EA757F26DB18AC2E2B14E06FB74021F0D67ADD5E6BE1A47DFFD97
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:EVSIGN_KEY)) {
+            throw 'Repository secret EVSIGN_KEY is required.'
+          }
+          $tool = Join-Path $env:RUNNER_TEMP 'evsign-client-cli.exe'
+          Invoke-WebRequest -UseBasicParsing $env:EVSIGN_CLI_URL -OutFile $tool
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $tool).Hash
+          if ($actualHash -ne $env:EVSIGN_CLI_SHA256) {
+            throw "EV Sign CLI SHA-256 mismatch: $actualHash"
+          }
+          $signature = Get-AuthenticodeSignature -LiteralPath $tool
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notlike '*Keroro Software Ltd*') {
+            throw "EV Sign CLI Authenticode verification failed: $($signature.Status)"
+          }
+          "EVSIGN_CLI=$tool" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install DeepSeek Harness dependencies
+        shell: pwsh
+        working-directory: deepseek-harness
+        run: pnpm install --frozen-lockfile
+
+      - name: Install DeepSeek Work dependencies
+        shell: pwsh
+        working-directory: deepseek-work
+        run: pnpm install --frozen-lockfile
+
+      - name: Check release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        working-directory: deepseek-work
+        run: |
+          $version = (Get-Content -Raw -Encoding UTF8 package.json | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME does not match package version $version."
+          }
+
+      - name: Check
+        shell: pwsh
+        working-directory: deepseek-work
+        run: pnpm run check
+
+      - name: Build, sign, and verify Windows release
+        shell: pwsh
+        working-directory: deepseek-work
+        run: pnpm run release:win
+
+      - name: Upload signed Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: deepseek-work-windows-x64-${{ github.sha }}
+          path: |
+            deepseek-work/release/DeepSeek-Work-Setup-*-x64.exe
+            deepseek-work/release/DeepSeek-Work-Setup-*-x64.exe.blockmap
+            deepseek-work/build/runtime/runtime-pruning.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

@@ -1,16 +1,23 @@
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
+import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   HarnessSupervisor,
   locateHarnessRoot,
+  resolveHarnessEntrypoint,
   resolveHarnessNode,
 } from './harness.js'
+import { StartupShell } from './splash.js'
 
 const isSmokeRun = process.argv.includes('--smoke')
+const smokeUserData = process.env.DEEPSEEK_WORK_SMOKE_USER_DATA
+if (isSmokeRun && smokeUserData !== undefined) app.setPath('userData', smokeUserData)
 
+const startupShell = new StartupShell(!isSmokeRun)
 let harness: HarnessSupervisor | undefined
 let harnessUrl: URL | undefined
 let mainWindow: BrowserWindow | undefined
+let startupInFlight = false
 let shutdownComplete = false
 let shutdownPromise: Promise<void> | undefined
 
@@ -22,6 +29,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => {
     if (mainWindow === undefined) return
     if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
     mainWindow.focus()
   })
 
@@ -29,6 +37,7 @@ if (!app.requestSingleInstanceLock()) {
     if (shutdownComplete) return
     event.preventDefault()
     shutdownPromise ??= shutdownHarness().then(() => {
+      startupShell.close()
       shutdownComplete = true
       app.quit()
     })
@@ -36,46 +45,95 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('window-all-closed', () => app.quit())
 
-  void app.whenReady().then(startDesktop).catch(handleStartupFailure)
+  void app.whenReady().then(async () => {
+    await startupShell.open(app.getVersion())
+    startupShell.onAction((action) => {
+      if (action === 'quit') app.quit()
+      else if (!startupInFlight) void launchDesktop().catch(handleStartupFailure)
+    })
+    await launchDesktop()
+  }).catch(handleStartupFailure)
 }
 
-async function startDesktop(): Promise<void> {
-  const harnessRoot = locateHarnessRoot({
-    appPath: app.getAppPath(),
-    isPackaged: app.isPackaged,
-    resourcesPath: process.resourcesPath,
-    ...(process.env.DEEPSEEK_HARNESS_ROOT === undefined
-      ? {}
-      : { explicitRoot: process.env.DEEPSEEK_HARNESS_ROOT }),
-  })
-  const nodeExecutable = resolveHarnessNode(
-    process.env.DEEPSEEK_HARNESS_NODE,
-    app.isPackaged,
-    process.resourcesPath,
-  )
+async function launchDesktop(): Promise<void> {
+  if (startupInFlight) return
+  startupInFlight = true
+  try {
+    await startupShell.update({
+      phase: 'verify',
+      progress: 12,
+      detail: '正在验证 DeepSeek Harness 和内置 Node.js 运行时。',
+    })
+    await shutdownHarness()
 
-  harness = new HarnessSupervisor({
-    dataRoot: join(app.getPath('userData'), 'harness'),
-    harnessRoot,
-    logger: (source, text) => {
-      const stream = source === 'stderr' ? process.stderr : process.stdout
-      stream.write(`[harness] ${text}`)
-    },
-    nodeExecutable,
-    onUnexpectedExit: (description) => {
-      console.error(description)
-      if (!isSmokeRun && app.isReady()) dialog.showErrorBox('DeepSeek Work', description)
-      app.quit()
-    },
-  })
+    const harnessRoot = locateHarnessRoot({
+      appPath: app.getAppPath(),
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      ...(process.env.DEEPSEEK_HARNESS_ROOT === undefined
+        ? {}
+        : { explicitRoot: process.env.DEEPSEEK_HARNESS_ROOT }),
+    })
+    const entrypoint = resolveHarnessEntrypoint(harnessRoot)
+    const nodeExecutable = resolveHarnessNode(
+      process.env.DEEPSEEK_HARNESS_NODE,
+      app.isPackaged,
+      process.resourcesPath,
+    )
+    if (app.isPackaged && !existsSync(nodeExecutable)) {
+      throw new Error('The packaged Node.js runtime is missing or incomplete.')
+    }
 
-  harnessUrl = await harness.start()
-  mainWindow = createWindow(harnessUrl)
-  await mainWindow.loadURL(harnessUrl.href)
+    await startupShell.update({
+      phase: 'prepare',
+      progress: 34,
+      detail: '正在准备本地工作目录，用户数据不会写入程序安装目录。',
+    })
+    await startupShell.update({
+      phase: 'launch',
+      progress: 56,
+      detail: '正在启动 DeepSeek Harness，本地端口由系统安全分配。',
+    })
 
-  if (isSmokeRun) {
-    console.log(`deepseek-work smoke: loaded ${harnessUrl.href}`)
-    app.quit()
+    harness = new HarnessSupervisor({
+      dataRoot: join(app.getPath('userData'), 'harness'),
+      entryScript: entrypoint.entryScript,
+      harnessRoot,
+      logger: (source, text) => {
+        const stream = source === 'stderr' ? process.stderr : process.stdout
+        stream.write(`[harness] ${text}`)
+      },
+      nodeExecutable,
+      sourceLaunch: entrypoint.sourceLaunch,
+      onUnexpectedExit: (description) => {
+        void handleRuntimeExit(description)
+      },
+    })
+
+    harnessUrl = await harness.start()
+    await startupShell.update({
+      phase: 'connect',
+      progress: 84,
+      detail: 'Harness 已就绪，正在连接桌面工作台。',
+    })
+
+    mainWindow?.destroy()
+    mainWindow = createWindow(harnessUrl)
+    await mainWindow.loadURL(harnessUrl.href)
+    await startupShell.update({
+      phase: 'connect',
+      progress: 100,
+      detail: '工作台已就绪。',
+    })
+
+    writeSmokeReceipt({ loaded: true, url: harnessUrl.href })
+    if (isSmokeRun) app.quit()
+    else {
+      mainWindow.show()
+      startupShell.close()
+    }
+  } finally {
+    startupInFlight = false
   }
 }
 
@@ -83,12 +141,14 @@ function createWindow(url: URL): BrowserWindow {
   const allowedOrigin = url.origin
   const window = new BrowserWindow({
     width: 1440,
-    height: 960,
+    height: 900,
     minWidth: 960,
     minHeight: 640,
     show: false,
     title: 'DeepSeek Work',
-    backgroundColor: '#0b0d10',
+    icon: iconPath(),
+    autoHideMenuBar: true,
+    backgroundColor: '#f6f7fb',
     webPreferences: {
       allowRunningInsecureContent: false,
       contextIsolation: true,
@@ -98,29 +158,26 @@ function createWindow(url: URL): BrowserWindow {
     },
   })
 
-  window.once('ready-to-show', () => {
-    if (!isSmokeRun) window.show()
-  })
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = undefined
   })
-
   window.webContents.on('will-navigate', (event, targetUrl) => {
-    if (hasOrigin(targetUrl, allowedOrigin)) return
-    event.preventDefault()
-    void openExternal(targetUrl)
+    if (!hasOrigin(targetUrl, allowedOrigin)) event.preventDefault()
   })
   window.webContents.on('will-redirect', (event, targetUrl) => {
-    if (hasOrigin(targetUrl, allowedOrigin)) return
-    event.preventDefault()
+    if (!hasOrigin(targetUrl, allowedOrigin)) event.preventDefault()
   })
   window.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
-    if (hasOrigin(targetUrl, allowedOrigin)) return { action: 'allow' }
-    void openExternal(targetUrl)
+    if (!hasOrigin(targetUrl, allowedOrigin)) void openExternal(targetUrl)
     return { action: 'deny' }
   })
 
   return window
+}
+
+function iconPath(): string {
+  if (app.isPackaged) return join(process.resourcesPath, 'icons', process.platform === 'win32' ? 'icon.ico' : 'icon.png')
+  return join(app.getAppPath(), 'build', process.platform === 'win32' ? 'icon.ico' : 'icon.png')
 }
 
 function hasOrigin(targetUrl: string, allowedOrigin: string): boolean {
@@ -140,6 +197,19 @@ async function openExternal(targetUrl: string): Promise<void> {
   }
 }
 
+async function handleRuntimeExit(description: string): Promise<void> {
+  console.error(description)
+  mainWindow?.destroy()
+  mainWindow = undefined
+  await startupShell.open(app.getVersion())
+  await startupShell.update({
+    phase: 'error',
+    progress: 100,
+    detail: 'DeepSeek Harness 已意外停止。',
+    error: description,
+  })
+}
+
 async function shutdownHarness(): Promise<void> {
   const runningHarness = harness
   harness = undefined
@@ -148,10 +218,30 @@ async function shutdownHarness(): Promise<void> {
 }
 
 async function handleStartupFailure(error: unknown): Promise<void> {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = sanitizeError(error instanceof Error ? error.message : String(error))
   console.error(error)
-  if (!isSmokeRun && app.isReady()) dialog.showErrorBox('DeepSeek Work failed to start', message)
   await shutdownHarness()
-  shutdownComplete = true
-  app.exit(1)
+  writeSmokeReceipt({ loaded: false, error: message })
+  if (isSmokeRun) {
+    shutdownComplete = true
+    app.exit(1)
+    return
+  }
+  await startupShell.open(app.getVersion())
+  await startupShell.update({
+    phase: 'error',
+    progress: 100,
+    detail: '桌面工作台未能完成启动，可以重试或退出。',
+    error: message,
+  })
+}
+
+function sanitizeError(message: string): string {
+  return message.replace(/[A-Za-z]:\\[^\s]+/gu, '…').slice(0, 240)
+}
+
+function writeSmokeReceipt(receipt: { error?: string; loaded: boolean; url?: string }): void {
+  const output = process.env.DEEPSEEK_WORK_SMOKE_RECEIPT
+  if (!isSmokeRun || output === undefined) return
+  writeFileSync(output, `${JSON.stringify(receipt)}\n`, 'utf8')
 }

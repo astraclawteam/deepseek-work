@@ -1,0 +1,70 @@
+appId: ai.astraclaw.deepseekwork
+productName: DeepSeek Work
+copyright: Copyright © 2026 AstraClaw Team
+
+artifactName: DeepSeek-Work-${version}-${arch}.${ext}
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - src/renderer/**/*
+  - assets/brand/**/*
+  - build/splash-hero.webp
+  - package.json
+
+extraResources:
+  - from: build/runtime/harness
+    to: harness
+    filter:
+      - '**/*'
+  - from: build/runtime/harness/node_modules
+    to: harness/node_modules
+    filter:
+      - '**/*'
+  - from: build/runtime/node
+    to: runtime
+  - from: build/runtime/runtime-manifest.json
+    to: runtime-manifest.json
+  - from: build/runtime/runtime-pruning.json
+    to: runtime-pruning.json
+  - from: build/icon.ico
+    to: icons/icon.ico
+  - from: build/icon.png
+    to: icons/icon.png
+  - from: build/tray-icon.png
+    to: icons/tray-icon.png
+
+asar: true
+npmRebuild: false
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.ico
+  signtoolOptions:
+    publisherName:
+      - RushRush Network Technology Ltd
+    sign: build/sign.cjs
+
+nsis:
+  artifactName: DeepSeek-Work-Setup-${version}-${arch}.${ext}
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  displayLanguageSelector: false
+  installerLanguages:
+    - zh_CN
+    - en_US
+  language: 2052
+  license: LICENSE
+  installerSidebar: build/installer-sidebar.bmp
+  uninstallerSidebar: build/uninstaller-sidebar.bmp
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: DeepSeek Work
+  uninstallDisplayName: DeepSeek Work
+  deleteAppDataOnUninstall: false
