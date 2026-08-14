@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { prepareMacOSSigningEnvironment } from '../scripts/macos-signing-environment.mjs'
 
 const require = createRequire(import.meta.url)
 const {
@@ -52,5 +53,23 @@ describe('Windows code signing scope', () => {
       if (previousThumbprint === undefined) delete process.env.WIN_CSC_SHA1
       else process.env.WIN_CSC_SHA1 = previousThumbprint
     }
+  })
+})
+
+describe('macOS code signing environment', () => {
+  it('removes empty certificate variables before an ad-hoc build', () => {
+    const source = { CSC_KEY_PASSWORD: 'unused', CSC_LINK: '', PATH: '/usr/bin' }
+    const result = prepareMacOSSigningEnvironment(source)
+
+    expect(result).toEqual({ environment: { PATH: '/usr/bin' }, hasDeveloperId: false })
+    expect(source).toHaveProperty('CSC_LINK', '')
+  })
+
+  it('retains a configured Developer ID identity', () => {
+    const result = prepareMacOSSigningEnvironment({ CSC_KEY_PASSWORD: 'secret', CSC_LINK: 'certificate.p12' })
+
+    expect(result.hasDeveloperId).toBe(true)
+    expect(result.environment.CSC_LINK).toBe('certificate.p12')
+    expect(result.environment.CSC_KEY_PASSWORD).toBe('secret')
   })
 })

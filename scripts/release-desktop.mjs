@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { releaseCacheRoot, resolveElectronDistribution } from './electron-distribution.mjs'
+import { prepareMacOSSigningEnvironment } from './macos-signing-environment.mjs'
 import { assertHostMatchesTarget, readRuntimeConfiguration } from './runtime-target.mjs'
 
 const repositoryRoot = resolve(import.meta.dirname, '..')
@@ -9,7 +10,7 @@ const runtime = readRuntimeConfiguration(repositoryRoot, requestedTarget)
 assertHostMatchesTarget(runtime.targetName)
 
 const nodeExecutable = process.execPath
-const environment = environmentWithCurrentNode(process.env)
+let environment = environmentWithCurrentNode(process.env)
 environment.DEEPSEEK_WORK_TARGET = runtime.targetName
 const electronDistribution = await resolveElectronDistribution({
   repositoryRoot,
@@ -22,9 +23,14 @@ const electronDistribution = await resolveElectronDistribution({
 })
 console.log(`Using ${electronDistribution.source}: ${electronDistribution.path}`)
 
-const platformStages = runtime.targetName === 'win32-x64'
-  ? windowsStages(electronDistribution.path)
-  : macOSStages(electronDistribution.path, environment)
+let platformStages
+if (runtime.targetName === 'win32-x64') {
+  platformStages = windowsStages(electronDistribution.path)
+} else {
+  const signing = prepareMacOSSigningEnvironment(environment)
+  environment = signing.environment
+  platformStages = macOSStages(electronDistribution.path, signing.hasDeveloperId)
+}
 const stages = [
   ['prepare desktop runtime', join(repositoryRoot, 'scripts', 'prepare-runtime.mjs'), []],
   ['generate desktop assets', join(repositoryRoot, 'scripts', 'generate-assets.mjs'), []],
@@ -54,8 +60,7 @@ function windowsStages(electronDistribution) {
   ]
 }
 
-function macOSStages(electronDistribution, releaseEnvironment) {
-  const hasDeveloperId = Boolean(releaseEnvironment.CSC_LINK?.trim())
+function macOSStages(electronDistribution, hasDeveloperId) {
   const signingArguments = hasDeveloperId
     ? ['--config.forceCodeSigning=true', '--config.mac.notarize=true']
     : ['--config.mac.identity=-', '--config.mac.notarize=false']
