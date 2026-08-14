@@ -109,6 +109,8 @@ jobs:
         working-directory: deepseek-work
         run: |
           $nodeExecutable = Join-Path $env:NODEJS_HOME 'node.exe'
+          $cacheDrive = [IO.Path]::GetPathRoot($PWD.Path)
+          $env:DEEPSEEK_WORK_CACHE_ROOT = Join-Path $cacheDrive 'deepseek-work-release-cache'
           & $nodeExecutable --version
           & $nodeExecutable scripts\release-windows.mjs
 

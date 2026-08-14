@@ -19,7 +19,8 @@ import { pruneRuntimeTree, RUNTIME_PRUNING_POLICY_VERSION } from './runtime-prun
 
 const repositoryRoot = resolve(import.meta.dirname, '..')
 const lock = readJson(join(repositoryRoot, 'runtime-lock.json'))
-const cacheRoot = join(repositoryRoot, '.release-cache')
+const configuredCacheRoot = process.env.DEEPSEEK_WORK_CACHE_ROOT?.trim()
+const cacheRoot = configuredCacheRoot ? resolve(configuredCacheRoot) : join(repositoryRoot, '.release-cache')
 const runtimeCacheRoot = join(cacheRoot, 'runtime-v1')
 const downloadRoot = join(cacheRoot, 'downloads')
 const npmCacheRoot = join(cacheRoot, 'npm')

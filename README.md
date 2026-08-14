@@ -23,7 +23,7 @@ The desktop process gives Harness a dedicated data directory beneath Electron's 
 
 ## Windows package
 
-The release pipeline pins the exact Harness commit and official Windows x64 Node runtime in `runtime-lock.json`. It builds the upstream release packages, selects the production dependency closure, installs native Windows dependencies, applies a versioned release-only pruning policy, verifies every staged file with SHA-256, and stores the result in `.release-cache`. Unchanged inputs reuse this verified cache instead of rebuilding or downloading the runtime.
+The release pipeline pins the exact Harness commit and official Windows x64 Node runtime in `runtime-lock.json`. It builds the upstream release packages, selects the production dependency closure, installs native Windows dependencies, applies a versioned release-only pruning policy, verifies every staged file with SHA-256, and stores the result in `.release-cache` or `DEEPSEEK_WORK_CACHE_ROOT` when configured. Unchanged inputs reuse this verified cache instead of rebuilding or downloading the runtime.
 
 Pruning is implemented entirely in DeepSeek Work and never edits the upstream checkout. It removes type declarations, source maps, native debug symbols, development/test documentation, package-manager metadata, and native payloads that cannot run on Windows x64. Runtime JavaScript, configuration, Web assets, licenses, package manifests, prompts, Windows x64 native modules, and worker files are retained. `build/runtime/runtime-pruning.json` records exact before/after counts and removal reasons for each staged runtime.
 
