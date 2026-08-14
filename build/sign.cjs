@@ -2,7 +2,7 @@ const { execFileSync } = require('node:child_process')
 const { existsSync } = require('node:fs')
 const { basename, resolve } = require('node:path')
 
-const EXPECTED_PUBLISHER = 'RushRush Network Technology Ltd'
+const EXPECTED_PUBLISHER = '惠州顺视智能科技有限公司'
 const MAX_ATTEMPTS = 8
 const RETRY_DELAY_MS = 4_000
 

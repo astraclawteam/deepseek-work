@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 
 const repositoryRoot = resolve(import.meta.dirname, '..')
-const expectedPublisher = process.env.EXPECTED_WINDOWS_PUBLISHER ?? 'RushRush Network Technology Ltd'
+const expectedPublisher = process.env.EXPECTED_WINDOWS_PUBLISHER ?? '惠州顺视智能科技有限公司'
 const packageVersion = JSON.parse(await readFile(join(repositoryRoot, 'package.json'), 'utf8')).version
 const targets = [
   join(repositoryRoot, 'release', 'win-unpacked', 'DeepSeek Work.exe'),

@@ -47,7 +47,7 @@ win:
   icon: build/icon.ico
   signtoolOptions:
     publisherName:
-      - RushRush Network Technology Ltd
+      - 惠州顺视智能科技有限公司
     sign: build/sign.cjs
 
 nsis:
