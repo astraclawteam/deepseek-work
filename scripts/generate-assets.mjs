@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import pngToIco from 'png-to-ico'
@@ -23,8 +24,24 @@ async function generateIcons() {
   const images = await Promise.all(sizes.map(renderIcon))
 
   writeFileSync(join(buildRoot, 'icon.ico'), await pngToIco(images))
-  writeFileSync(join(buildRoot, 'icon.png'), images.at(-1))
+  writeFileSync(join(buildRoot, 'icon.png'), await renderIcon(1024))
   writeFileSync(join(buildRoot, 'tray-icon.png'), await renderIcon(32))
+  if (process.platform === 'darwin') await generateMacOSIcon()
+}
+
+async function generateMacOSIcon() {
+  const iconset = join(buildRoot, 'icon.iconset')
+  rmSync(iconset, { force: true, recursive: true })
+  mkdirSync(iconset, { recursive: true })
+  try {
+    for (const size of [16, 32, 128, 256, 512]) {
+      writeFileSync(join(iconset, `icon_${size}x${size}.png`), await renderIcon(size))
+      writeFileSync(join(iconset, `icon_${size}x${size}@2x.png`), await renderIcon(size * 2))
+    }
+    execFileSync('iconutil', ['--convert', 'icns', '--output', join(buildRoot, 'icon.icns'), iconset], { stdio: 'inherit' })
+  } finally {
+    rmSync(iconset, { force: true, recursive: true })
+  }
 }
 
 async function renderIcon(size) {

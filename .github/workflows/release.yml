@@ -1,0 +1,270 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: [self-hosted, Windows, X64, simplysign]
+    timeout-minutes: 45
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      REQUIRE_CODE_SIGNING: '1'
+    steps:
+      - name: Check out DeepSeek Work
+        uses: actions/checkout@v7
+        with:
+          clean: false
+          path: deepseek-work
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Read runtime lock
+        id: runtime-lock
+        shell: powershell
+        working-directory: deepseek-work
+        run: |
+          $lock = Get-Content -Raw -Encoding UTF8 runtime-lock.json | ConvertFrom-Json
+          "harness-ref=$($lock.harness.commit)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Check out pinned DeepSeek Harness
+        uses: actions/checkout@v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ steps.runtime-lock.outputs.harness-ref }}
+          clean: false
+          path: deepseek-harness
+
+      - name: Enable pnpm
+        shell: powershell
+        run: |
+          $nodeExecutable = (Get-Command node.exe -ErrorAction Stop).Source
+          $nodeDirectory = Split-Path -Parent $nodeExecutable
+          $nodeDirectory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "NODEJS_HOME=$nodeDirectory" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $env:Path = "$nodeDirectory;$env:Path"
+          corepack enable
+          corepack prepare pnpm@11.7.0 --activate
+          node --version
+          pnpm --version
+
+      - name: Verify SimplySign Desktop session
+        shell: powershell
+        run: |
+          $desktop = Get-Process SimplySignDesktop -ErrorAction SilentlyContinue
+          if (-not $desktop) {
+            throw 'SimplySign Desktop must be running in the interactive self-hosted runner session.'
+          }
+          $codeSigningOid = '1.3.6.1.5.5.7.3.3'
+          $expectedThumbprint = 'EEE5C9B2188F1B62A06B7EEDF2C25AE2C79B1B90'
+          $certificate = Get-Item -LiteralPath "Cert:\CurrentUser\My\$expectedThumbprint" -ErrorAction SilentlyContinue
+          if (-not $certificate) {
+            throw 'The pinned AstraClaw Team Certum certificate is not exposed by SimplySign.'
+          }
+          $ekuOids = @($certificate.EnhancedKeyUsageList | ForEach-Object { [string]$_.ObjectId })
+          if (-not $certificate.HasPrivateKey -or $ekuOids -notcontains $codeSigningOid -or $certificate.NotAfter -le (Get-Date)) {
+            throw 'The pinned SimplySign certificate is not an active code-signing identity with a private key.'
+          }
+          $signTool = 'C:\Program Files (x86)\Windows Kits\10\App Certification Kit\signtool.exe'
+          if (-not (Test-Path -LiteralPath $signTool)) {
+            $signTool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' -ErrorAction SilentlyContinue |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $signTool -or -not (Test-Path -LiteralPath $signTool)) {
+            throw 'Windows SDK SignTool is required on the self-hosted runner.'
+          }
+          "WIN_CSC_SHA1=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "SIGNTOOL_PATH=$signTool" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install DeepSeek Harness dependencies
+        shell: powershell
+        working-directory: deepseek-harness
+        run: pnpm install --frozen-lockfile
+
+      - name: Install DeepSeek Work dependencies
+        shell: powershell
+        working-directory: deepseek-work
+        run: pnpm install --frozen-lockfile
+
+      - name: Check release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: powershell
+        working-directory: deepseek-work
+        run: |
+          $version = (Get-Content -Raw -Encoding UTF8 package.json | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME does not match package version $version."
+          }
+
+      - name: Check
+        shell: powershell
+        working-directory: deepseek-work
+        run: pnpm run check
+
+      - name: Build, sign, and verify Windows release
+        shell: powershell
+        working-directory: deepseek-work
+        run: |
+          $nodeExecutable = Join-Path $env:NODEJS_HOME 'node.exe'
+          $cacheDrive = [IO.Path]::GetPathRoot($PWD.Path)
+          $env:DEEPSEEK_WORK_CACHE_ROOT = Join-Path $cacheDrive 'deepseek-work-release-cache'
+          & $nodeExecutable scripts\release-desktop.mjs --target win32-x64
+
+      - name: Upload signed Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: deepseek-work-windows-x64
+          path: |
+            deepseek-work/release/DeepSeek-Work-Setup-*-x64.exe
+            deepseek-work/release/DeepSeek-Work-Setup-*-x64.exe.blockmap
+            deepseek-work/build/runtime/runtime-pruning.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  macos:
+    name: macOS Apple Silicon
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+      CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      REQUIRE_MACOS_DEVELOPER_ID: ${{ startsWith(github.ref, 'refs/tags/') && '1' || '0' }}
+    steps:
+      - name: Check out DeepSeek Work
+        uses: actions/checkout@v7
+        with:
+          path: deepseek-work
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Read runtime lock
+        id: runtime-lock
+        working-directory: deepseek-work
+        run: echo "harness-ref=$(node -p 'require("./runtime-lock.json").harness.commit')" >> "$GITHUB_OUTPUT"
+
+      - name: Check out pinned DeepSeek Harness
+        uses: actions/checkout@v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ steps.runtime-lock.outputs.harness-ref }}
+          path: deepseek-harness
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.7.0 --activate
+          node --version
+          pnpm --version
+
+      - name: Restore verified release cache
+        uses: actions/cache@v5
+        with:
+          path: deepseek-work/.release-cache
+          key: macos-arm64-release-v2-${{ hashFiles('deepseek-work/runtime-lock.json', 'deepseek-work/scripts/runtime-pruning-policy.mjs') }}
+          restore-keys: macos-arm64-release-v2-
+
+      - name: Verify macOS signing mode
+        run: |
+          if [[ "$REQUIRE_MACOS_DEVELOPER_ID" == "1" && -z "$CSC_LINK" ]]; then
+            echo 'MAC_CSC_LINK is required for a tagged Developer ID release.' >&2
+            exit 1
+          fi
+          if [[ -n "$CSC_LINK" ]]; then
+            [[ -n "$CSC_KEY_PASSWORD" && -n "$APPLE_ID" && -n "$APPLE_TEAM_ID" && -n "$APPLE_APP_SPECIFIC_PASSWORD" ]]
+            echo 'Developer ID signing and notarization are required.'
+          else
+            echo 'Manual preview run: using an explicit ad-hoc signature.'
+          fi
+
+      - name: Install DeepSeek Harness dependencies
+        working-directory: deepseek-harness
+        run: pnpm install --frozen-lockfile
+
+      - name: Install DeepSeek Work dependencies
+        working-directory: deepseek-work
+        run: pnpm install --frozen-lockfile
+
+      - name: Check release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        working-directory: deepseek-work
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          [[ "$GITHUB_REF_NAME" == "v$version" ]]
+
+      - name: Check
+        working-directory: deepseek-work
+        run: pnpm run check
+
+      - name: Build, sign, notarize, and verify macOS release
+        working-directory: deepseek-work
+        run: pnpm run release:mac
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: deepseek-work-macos-arm64
+          path: |
+            deepseek-work/release/DeepSeek-Work-*-macOS-arm64.dmg
+            deepseek-work/release/DeepSeek-Work-*-macOS-arm64.zip
+            deepseek-work/build/runtime/runtime-pruning.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  publish:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: deepseek-work-windows-x64
+          path: artifacts/windows
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: deepseek-work-macos-arm64
+          path: artifacts/macos
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mapfile -d '' assets < <(find artifacts/windows/release artifacts/macos/release -maxdepth 1 -type f \( -name '*.exe' -o -name '*.blockmap' -o -name '*.dmg' -o -name '*.zip' \) -print0)
+          if [[ ${#assets[@]} -lt 4 ]]; then
+            echo 'Expected Windows and macOS release assets were not downloaded.' >&2
+            exit 1
+          fi
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" --generate-notes --title "DeepSeek Work $GITHUB_REF_NAME" --verify-tag --repo "$GITHUB_REPOSITORY"
+          fi

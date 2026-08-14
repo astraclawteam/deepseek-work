@@ -1,17 +1,21 @@
-import { createHash } from 'node:crypto'
-import { createReadStream, existsSync, readdirSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 
 export async function resolveElectronDistribution({
   repositoryRoot,
   cacheRoot,
   localAppData,
   configuredDistribution,
-  lock,
+  electron,
+  targetName,
+  downloadMissing = false,
+  fetchImplementation = fetch,
 }) {
   const manifest = JSON.parse(await readFile(join(repositoryRoot, 'package.json'), 'utf8'))
-  const electron = lock?.electron
   if (!/^\d+\.\d+\.\d+$/u.test(electron?.version ?? '')) {
     throw new Error('Invalid Electron version in runtime-lock.json')
   }
@@ -23,10 +27,16 @@ export async function resolveElectronDistribution({
       `Electron ${String(manifest.devDependencies?.electron)} does not match runtime-lock.json ${electron.version}`,
     )
   }
+  const executableMarker = targetName === 'win32-x64'
+    ? 'electron.exe'
+    : targetName === 'darwin-arm64'
+      ? join('Electron.app', 'Contents', 'MacOS', 'Electron')
+      : undefined
+  if (executableMarker === undefined) throw new Error(`Unsupported Electron release target: ${String(targetName)}`)
 
   if (configuredDistribution) {
     const configuredPath = resolve(configuredDistribution)
-    if (existsSync(join(configuredPath, 'electron.exe'))) {
+    if (existsSync(join(configuredPath, executableMarker))) {
       return { path: configuredPath, source: 'configured Electron distribution' }
     }
     if (existsSync(configuredPath) && await sha256File(configuredPath) === electron.sha256) {
@@ -36,7 +46,7 @@ export async function resolveElectronDistribution({
   }
 
   const installedDistribution = join(repositoryRoot, 'node_modules', 'electron', 'dist')
-  if (existsSync(join(installedDistribution, 'electron.exe'))) {
+  if (existsSync(join(installedDistribution, executableMarker))) {
     return { path: installedDistribution, source: 'installed Electron package' }
   }
 
@@ -49,6 +59,12 @@ export async function resolveElectronDistribution({
     if (await sha256File(candidate) === electron.sha256) {
       return { path: candidate, source: 'verified Electron archive' }
     }
+  }
+
+  if (downloadMissing) {
+    const destination = join(cacheRoot, 'downloads', electron.archive)
+    await downloadPinnedElectron(electron, destination, fetchImplementation)
+    return { path: destination, source: 'downloaded verified Electron archive' }
   }
 
   throw new Error(
@@ -100,4 +116,25 @@ function sha256File(filePath) {
     stream.on('error', reject)
     stream.on('end', () => resolveDigest(hash.digest('hex')))
   })
+}
+
+async function downloadPinnedElectron(electron, destination, fetchImplementation) {
+  const officialOrigin = `https://github.com/electron/electron/releases/download/v${electron.version}/`
+  if (typeof electron.url !== 'string' || !electron.url.startsWith(officialOrigin) || !electron.url.endsWith(`/${electron.archive}`)) {
+    throw new Error('Electron archive must come from the pinned official GitHub release')
+  }
+  mkdirSync(dirname(destination), { recursive: true })
+  const temporary = `${destination}.${randomUUID()}.part`
+  try {
+    const response = await fetchImplementation(electron.url)
+    if (!response.ok || response.body === null) throw new Error(`Electron download failed with HTTP ${response.status}`)
+    await pipeline(Readable.fromWeb(response.body), createWriteStream(temporary, { flags: 'wx' }))
+    const digest = await sha256File(temporary)
+    if (digest !== electron.sha256) {
+      throw new Error(`Electron SHA-256 mismatch for ${electron.archive}: ${digest}`)
+    }
+    renameSync(temporary, destination)
+  } finally {
+    rmSync(temporary, { force: true })
+  }
 }

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import {
   cpSync,
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -11,23 +12,24 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { basename, delimiter, dirname, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import extractZip from 'extract-zip'
 import * as tar from 'tar'
 import { pruneRuntimeTree, RUNTIME_PRUNING_POLICY_VERSION } from './runtime-pruning-policy.mjs'
+import { assertHostMatchesTarget, readRuntimeConfiguration } from './runtime-target.mjs'
 
 const repositoryRoot = resolve(import.meta.dirname, '..')
-const lock = readJson(join(repositoryRoot, 'runtime-lock.json'))
+const lock = readRuntimeConfiguration(repositoryRoot)
+assertHostMatchesTarget(lock.targetName)
 const configuredCacheRoot = process.env.DEEPSEEK_WORK_CACHE_ROOT?.trim()
 const cacheRoot = configuredCacheRoot ? resolve(configuredCacheRoot) : join(repositoryRoot, '.release-cache')
-const runtimeCacheRoot = join(cacheRoot, 'runtime-v1')
+const runtimeCacheRoot = join(cacheRoot, 'runtime-v2')
 const downloadRoot = join(cacheRoot, 'downloads')
 const npmCacheRoot = join(cacheRoot, 'npm')
 const destinationRoot = join(repositoryRoot, 'build', 'runtime')
 const harnessRoot = resolve(process.env.DEEPSEEK_HARNESS_ROOT || join(repositoryRoot, '..', 'deepseek-harness'))
 
-assertRuntimeLock(lock)
 const harnessManifest = readJson(join(harnessRoot, 'package.json'))
 if (harnessManifest.name !== lock.harness.packageName) {
   throw new Error(`Harness package mismatch at ${harnessRoot}`)
@@ -47,19 +49,19 @@ if (harnessStatus !== '') {
 
 const input = {
   schemaVersion: 1,
-  target: lock.target,
+  target: lock.targetName,
   harness: {
     commit: lock.harness.commit,
     packageVersion: lock.harness.packageVersion,
   },
   node: {
-    version: lock.node.version,
-    archive: lock.node.archive,
-    sha256: lock.node.sha256,
+    version: lock.target.node.version,
+    archive: lock.target.node.archive,
+    sha256: lock.target.node.sha256,
   },
   pruning: {
     policyVersion: RUNTIME_PRUNING_POLICY_VERSION,
-    target: lock.target,
+    target: lock.targetName,
   },
 }
 const cacheKey = sha256(Buffer.from(JSON.stringify(input)))
@@ -129,9 +131,9 @@ async function buildCandidate(workRoot, candidateRoot, cacheInput) {
   console.log(`Installing ${String(runtimePackageNames.length)} runtime packages from ${String(packed.length)} release tarballs.`)
 
   await stageNode(installedNode, workRoot)
-  const stagedVersion = capture(join(installedNode, 'node.exe'), ['--version'], installedNode)
-  if (stagedVersion !== `v${lock.node.version}`) {
-    throw new Error(`Staged Node reported ${stagedVersion}, expected v${lock.node.version}`)
+  const stagedVersion = capture(stagedNodeExecutable(installedNode), ['--version'], installedNode)
+  if (stagedVersion !== `v${lock.target.node.version}`) {
+    throw new Error(`Staged Node reported ${stagedVersion}, expected v${lock.target.node.version}`)
   }
 
   writeJson(join(installedHarness, 'package.json'), {
@@ -152,7 +154,7 @@ async function buildCandidate(workRoot, candidateRoot, cacheInput) {
     [environmentPathKey()]: sanitizedBuildPath(installedNode),
   })
 
-  const pruningReport = pruneRuntimeTree(installedHarness, lock.target)
+  const pruningReport = pruneRuntimeTree(installedHarness, lock.targetName)
   console.log(
     `Pruned ${String(pruningReport.removed.files)} files (${formatBytes(pruningReport.removed.bytes)}); `
     + `${String(pruningReport.after.files)} runtime files remain.`,
@@ -192,27 +194,32 @@ async function buildCandidate(workRoot, candidateRoot, cacheInput) {
 }
 
 async function stageNode(installedNode, workRoot) {
-  const archivePath = join(downloadRoot, lock.node.archive)
+  const node = lock.target.node
+  const archivePath = join(downloadRoot, node.archive)
   if (existsSync(archivePath)) {
-    assertDigest(archivePath, lock.node.sha256)
+    assertDigest(archivePath, node.sha256)
   } else {
-    console.log(`Downloading pinned Node.js ${lock.node.version} runtime.`)
-    const response = await fetch(lock.node.url)
+    console.log(`Downloading pinned Node.js ${node.version} runtime for ${lock.targetName}.`)
+    const response = await fetch(node.url)
     if (!response.ok) throw new Error(`Node.js download failed with HTTP ${response.status}`)
     writeFileSync(archivePath, Buffer.from(await response.arrayBuffer()))
-    assertDigest(archivePath, lock.node.sha256)
+    assertDigest(archivePath, node.sha256)
   }
 
   const extractionRoot = join(workRoot, 'node-extracted')
   mkdirSync(extractionRoot, { recursive: true })
-  await extractZip(archivePath, { dir: extractionRoot })
-  const archiveDirectory = lock.node.archive.replace(/\.zip$/u, '')
+  if (node.archive.endsWith('.zip')) await extractZip(archivePath, { dir: extractionRoot })
+  else if (node.archive.endsWith('.tar.gz')) await tar.x({ cwd: extractionRoot, file: archivePath, gzip: true })
+  else throw new Error(`Unsupported Node.js archive format: ${node.archive}`)
+  const archiveDirectory = node.archive.replace(/(?:\.zip|\.tar\.gz)$/u, '')
   const extracted = join(extractionRoot, archiveDirectory)
-  for (const filename of ['node.exe', 'LICENSE']) {
-    const source = join(extracted, filename)
-    if (!existsSync(source)) throw new Error(`Node.js archive is missing ${filename}`)
-    cpSync(source, join(installedNode, filename))
-  }
+  const sourceExecutable = lock.targetName === 'win32-x64' ? join(extracted, 'node.exe') : join(extracted, 'bin', 'node')
+  const destinationExecutable = stagedNodeExecutable(installedNode)
+  if (!existsSync(sourceExecutable)) throw new Error(`Node.js archive is missing its executable: ${sourceExecutable}`)
+  if (!existsSync(join(extracted, 'LICENSE'))) throw new Error('Node.js archive is missing LICENSE')
+  cpSync(sourceExecutable, destinationExecutable)
+  cpSync(join(extracted, 'LICENSE'), join(installedNode, 'LICENSE'))
+  if (lock.targetName !== 'win32-x64') chmodSync(destinationExecutable, 0o755)
 }
 
 function verifyCacheEntry(entryRoot, expectedInput) {
@@ -317,31 +324,25 @@ function collectRuntimePackageNames(packageByName, rootPackageName) {
 }
 
 function validateStagedHarness(installedHarness, installedNode, entry) {
-  const nodeExecutable = join(installedNode, 'node.exe')
+  const nodeExecutable = stagedNodeExecutable(installedNode)
   const reportedVersion = capture(nodeExecutable, [join(installedHarness, ...entry.split('/')), '--version'], installedHarness)
   if (reportedVersion !== lock.harness.packageVersion) {
     throw new Error(`Pruned Harness reported ${reportedVersion}, expected ${lock.harness.packageVersion}`)
   }
 
+  const shell = lock.targetName === 'win32-x64' ? (process.env.ComSpec || 'cmd.exe') : '/bin/sh'
+  const shellArguments = lock.targetName === 'win32-x64' ? ['/d', '/s', '/c', 'exit 0'] : ['-c', 'exit 0']
+  const terminalOptions = lock.targetName === 'win32-x64' ? ', useConpty: true' : ''
   const nativeProbe = [
     "const sharp = require('sharp')",
     "const pty = require('node-pty')",
     "const koffi = require('koffi')",
     "if (!sharp.versions?.vips || typeof pty.spawn !== 'function' || typeof koffi.load !== 'function') process.exit(4)",
-    "const child = pty.spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'exit 0'], { name: 'xterm-color', cols: 80, rows: 24, cwd: process.cwd(), env: process.env, useConpty: true })",
+    `const child = pty.spawn(${JSON.stringify(shell)}, ${JSON.stringify(shellArguments)}, { name: 'xterm-color', cols: 80, rows: 24, cwd: process.cwd(), env: process.env${terminalOptions} })`,
     "const timer = setTimeout(() => { child.kill(); process.exit(2) }, 10000)",
     "child.onExit(event => { clearTimeout(timer); process.exit(event.exitCode === 0 ? 0 : 3) })",
   ].join('; ')
   runCommand(nodeExecutable, ['-e', nativeProbe], installedHarness)
-}
-
-function assertRuntimeLock(value) {
-  if (value?.schemaVersion !== 1 || value.target !== 'win32-x64') throw new Error('Unsupported runtime-lock.json')
-  if (!/^[0-9a-f]{40}$/u.test(value.harness?.commit ?? '')) throw new Error('Invalid Harness commit in runtime-lock.json')
-  if (!/^[0-9a-f]{64}$/u.test(value.node?.sha256 ?? '')) throw new Error('Invalid Node.js digest in runtime-lock.json')
-  if (typeof value.node?.url !== 'string' || !value.node.url.startsWith('https://nodejs.org/dist/')) {
-    throw new Error('Node.js runtime must come from the official HTTPS distribution origin')
-  }
 }
 
 function assertDigest(file, expected) {
@@ -387,16 +388,17 @@ function runCommand(command, args, cwd, extraEnvironment = {}) {
 
 function childEnvironment(extraEnvironment) {
   const environment = { ...process.env, ...extraEnvironment }
+  const pathKey = environmentPathKey(environment)
   const configuredPathValues = Object.entries(extraEnvironment)
     .filter(([key]) => key.toLowerCase() === 'path')
-    .flatMap(([, value]) => String(value ?? '').split(';'))
+    .flatMap(([, value]) => String(value ?? '').split(delimiter))
   const inheritedPathValues = Object.entries(process.env)
     .filter(([key]) => key.toLowerCase() === 'path')
-    .flatMap(([, value]) => String(value ?? '').split(';'))
+    .flatMap(([, value]) => String(value ?? '').split(delimiter))
   for (const key of Object.keys(environment)) {
     if (key.toLowerCase() === 'path') delete environment[key]
   }
-  environment.Path = deduplicatePathValues([
+  environment[pathKey] = deduplicatePathValues([
     ...configuredPathValues,
     dirname(process.execPath),
     ...inheritedPathValues,
@@ -415,7 +417,7 @@ function deduplicatePathValues(values) {
       seen.add(identity)
       return true
     })
-    .join(';')
+    .join(delimiter)
 }
 
 function quoteCommandToken(value) {
@@ -424,8 +426,8 @@ function quoteCommandToken(value) {
   return `"${token.replaceAll('"', '""')}"`
 }
 
-function environmentPathKey() {
-  return Object.keys(process.env).find(key => key.toLowerCase() === 'path') ?? 'Path'
+function environmentPathKey(environment = process.env) {
+  return Object.keys(environment).find(key => key.toLowerCase() === 'path') ?? (process.platform === 'win32' ? 'Path' : 'PATH')
 }
 
 function sanitizedBuildPath(stagedNode) {
@@ -433,8 +435,8 @@ function sanitizedBuildPath(stagedNode) {
   const candidates = [
     stagedNode,
     dirname(process.execPath),
-    join(process.env.SystemRoot || 'C:\\Windows', 'System32'),
-    ...pathValue.split(';'),
+    ...(process.platform === 'win32' ? [join(process.env.SystemRoot || 'C:\\Windows', 'System32')] : []),
+    ...pathValue.split(delimiter),
   ]
   const seen = new Set()
   return candidates
@@ -446,7 +448,11 @@ function sanitizedBuildPath(stagedNode) {
       seen.add(identity)
       return true
     })
-    .join(';')
+    .join(delimiter)
+}
+
+function stagedNodeExecutable(installedNode) {
+  return join(installedNode, lock.targetName === 'win32-x64' ? 'node.exe' : 'node')
 }
 
 function removeOwnedDirectory(target, ownerRoot) {

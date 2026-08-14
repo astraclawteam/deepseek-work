@@ -21,7 +21,8 @@ describe('Electron release distribution', () => {
     await expect(resolveElectronDistribution({
       repositoryRoot,
       cacheRoot: join(repositoryRoot, 'cache'),
-      lock: lockFor('unused'),
+      electron: electronFor('unused'),
+      targetName: 'win32-x64',
     })).resolves.toEqual({ path: installed, source: 'installed Electron package' })
   })
 
@@ -35,7 +36,8 @@ describe('Electron release distribution', () => {
     await expect(resolveElectronDistribution({
       repositoryRoot,
       cacheRoot,
-      lock: lockFor('verified electron archive'),
+      electron: electronFor('verified electron archive'),
+      targetName: 'win32-x64',
     })).resolves.toEqual({ path: archive, source: 'verified Electron archive' })
   })
 
@@ -48,7 +50,8 @@ describe('Electron release distribution', () => {
       repositoryRoot,
       cacheRoot: join(repositoryRoot, 'unused-cache'),
       configuredDistribution: archive,
-      lock: lockFor('configured archive'),
+      electron: electronFor('configured archive'),
+      targetName: 'win32-x64',
     })).resolves.toEqual({ path: archive, source: 'configured verified Electron archive' })
   })
 
@@ -62,8 +65,27 @@ describe('Electron release distribution', () => {
     await expect(resolveElectronDistribution({
       repositoryRoot,
       cacheRoot,
-      lock: lockFor('expected'),
+      electron: electronFor('expected'),
+      targetName: 'win32-x64',
     })).rejects.toThrow('Pinned Electron archive')
+  })
+
+  it('downloads and verifies a missing pinned archive once', async () => {
+    const repositoryRoot = createRepository()
+    const cacheRoot = join(repositoryRoot, 'cache')
+    const content = 'downloaded electron archive'
+
+    await expect(resolveElectronDistribution({
+      repositoryRoot,
+      cacheRoot,
+      downloadMissing: true,
+      electron: electronFor(content),
+      fetchImplementation: async () => new Response(content),
+      targetName: 'win32-x64',
+    })).resolves.toEqual({
+      path: join(cacheRoot, 'downloads', 'electron-v43.4.0-win32-x64.zip'),
+      source: 'downloaded verified Electron archive',
+    })
   })
 
   it('supports an external short cache root', () => {
@@ -79,12 +101,11 @@ function createRepository() {
   return root
 }
 
-function lockFor(content) {
+function electronFor(content) {
   return {
-    electron: {
-      version: '43.4.0',
-      archive: 'electron-v43.4.0-win32-x64.zip',
-      sha256: createHash('sha256').update(content).digest('hex'),
-    },
+    version: '43.4.0',
+    archive: 'electron-v43.4.0-win32-x64.zip',
+    url: 'https://github.com/electron/electron/releases/download/v43.4.0/electron-v43.4.0-win32-x64.zip',
+    sha256: createHash('sha256').update(content).digest('hex'),
   }
 }

@@ -5,7 +5,12 @@ import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 
 const repositoryRoot = resolve(import.meta.dirname, '..')
-const executable = join(repositoryRoot, 'release', 'win-unpacked', 'DeepSeek Work.exe')
+const executable = process.platform === 'win32'
+  ? join(repositoryRoot, 'release', 'win-unpacked', 'DeepSeek Work.exe')
+  : process.platform === 'darwin' && process.arch === 'arm64'
+    ? join(repositoryRoot, 'release', 'mac-arm64', 'DeepSeek Work.app', 'Contents', 'MacOS', 'DeepSeek Work')
+    : undefined
+if (executable === undefined) throw new Error(`Packaged smoke does not support ${process.platform}-${process.arch}`)
 if (!existsSync(executable)) throw new Error(`Packaged executable is missing: ${executable}`)
 
 const smokeRoot = mkdtempSync(join(tmpdir(), 'deepseek-work-smoke-'))
@@ -40,12 +45,13 @@ function runPackagedSmoke(command, userData, receipt) {
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
+      detached: process.platform !== 'win32',
     })
     let stderr = ''
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-16_384) })
     const timeout = setTimeout(() => {
-      if (child.pid !== undefined) spawnSync('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
+      if (child.pid !== undefined) terminateTimedOutProcess(child.pid)
       rejectRun(new Error('Packaged smoke exceeded 180 seconds.'))
     }, 180_000)
     child.once('error', error => {
@@ -57,6 +63,18 @@ function runPackagedSmoke(command, userData, receipt) {
       resolveRun({ code, stderr })
     })
   })
+}
+
+function terminateTimedOutProcess(pid) {
+  if (process.platform === 'win32') {
+    spawnSync('taskkill.exe', ['/pid', String(pid), '/t', '/f'], { stdio: 'ignore' })
+    return
+  }
+  try {
+    process.kill(-pid, 'SIGKILL')
+  } catch {
+    // The process may have exited between the timeout and cleanup.
+  }
 }
 
 function canConnect(host, port) {

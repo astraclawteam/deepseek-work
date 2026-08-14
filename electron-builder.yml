@@ -52,6 +52,19 @@ win:
       - 惠州顺视智能科技有限公司
     sign: build/sign.cjs
 
+mac:
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  artifactName: DeepSeek-Work-${version}-macOS-${arch}.${ext}
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+
 nsis:
   artifactName: DeepSeek-Work-Setup-${version}-${arch}.${ext}
   oneClick: false

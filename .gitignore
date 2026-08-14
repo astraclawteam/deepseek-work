@@ -5,6 +5,7 @@ release/
 .release-cache/
 build/runtime/
 build/icon.ico
+build/icon.icns
 build/icon.png
 build/tray-icon.png
 build/splash-hero.webp

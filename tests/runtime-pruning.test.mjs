@@ -31,6 +31,19 @@ describe('runtime pruning policy', () => {
     expect(runtimePruningReason('desktop-runtime.json')).toBeUndefined()
   })
 
+  it('keeps Apple Silicon native modules and removes Windows-only terminal payloads for macOS', () => {
+    expect(runtimePruningReason('node_modules/node-pty/prebuilds/darwin-arm64/pty.node', 'darwin-arm64')).toBeUndefined()
+    expect(runtimePruningReason('node_modules/node-pty/prebuilds/win32-x64/pty.node', 'darwin-arm64'))
+      .toBe('non-target-native-payload')
+    expect(runtimePruningReason('node_modules/node-pty/third_party/conpty/1.0/win10-x64/conpty.dll', 'darwin-arm64'))
+      .toBe('non-target-native-payload')
+  })
+
+  it('rejects targets without an audited native pruning policy', () => {
+    expect(() => runtimePruningReason('node_modules/pkg/index.js', 'linux-x64'))
+      .toThrow('Unsupported runtime pruning target')
+  })
+
   it('prunes only classified files and reports exact counts', () => {
     const root = mkdtempSync(join(tmpdir(), 'deepseek-work-pruning-'))
     ownedRoots.push(root)

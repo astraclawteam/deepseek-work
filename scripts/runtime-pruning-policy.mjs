@@ -1,7 +1,12 @@
 import { lstatSync, readdirSync, rmdirSync, rmSync } from 'node:fs'
 import { relative, resolve, sep } from 'node:path'
 
-export const RUNTIME_PRUNING_POLICY_VERSION = 2
+export const RUNTIME_PRUNING_POLICY_VERSION = 3
+
+const NODE_PTY_PREBUILD_TARGETS = new Map([
+  ['darwin-arm64', 'darwin-arm64'],
+  ['win32-x64', 'win32-x64'],
+])
 
 const DEVELOPMENT_DIRECTORIES = new Set([
   '.circleci',
@@ -27,7 +32,8 @@ const PACKAGE_ROOT_DEVELOPMENT_DIRECTORIES = new Set([
 
 /** Classify a staged npm file for safe, release-only removal. */
 export function runtimePruningReason(relativePath, target = 'win32-x64') {
-  if (target !== 'win32-x64') throw new Error(`Unsupported runtime pruning target: ${target}`)
+  const nodePtyTarget = NODE_PTY_PREBUILD_TARGETS.get(target)
+  if (nodePtyTarget === undefined) throw new Error(`Unsupported runtime pruning target: ${target}`)
 
   const normalized = relativePath.replaceAll('\\', '/').replace(/^\.\//u, '')
   const lower = normalized.toLowerCase()
@@ -56,10 +62,16 @@ export function runtimePruningReason(relativePath, target = 'win32-x64') {
   }
 
   if (lower.startsWith('node_modules/@img/sharp-wasm32/')) return 'non-target-native-payload'
-  if (lower.startsWith('node_modules/node-pty/prebuilds/') && !lower.startsWith('node_modules/node-pty/prebuilds/win32-x64/')) {
+  if (lower.startsWith('node_modules/node-pty/prebuilds/') && !lower.startsWith(`node_modules/node-pty/prebuilds/${nodePtyTarget}/`)) {
     return 'non-target-native-payload'
   }
-  if (lower.includes('node_modules/node-pty/third_party/conpty/') && lower.includes('/win10-arm64/')) {
+  if (target === 'darwin-arm64' && (
+    lower.includes('node_modules/node-pty/third_party/conpty/')
+    || lower.includes('node_modules/node-pty/build/release/conpty/')
+  )) {
+    return 'non-target-native-payload'
+  }
+  if (target === 'win32-x64' && lower.includes('node_modules/node-pty/third_party/conpty/') && lower.includes('/win10-arm64/')) {
     return 'non-target-native-payload'
   }
 

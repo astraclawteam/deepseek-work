@@ -1,6 +1,6 @@
 # Third-party notices
 
-DeepSeek Work's self-contained Windows package includes the following third-party software.
+DeepSeek Work's self-contained Windows and macOS packages include the following third-party software.
 
 ## DeepSeek Harness
 
@@ -17,7 +17,7 @@ The official black whale icon and wordmark in `assets/brand` are copied from the
 ## Node.js
 
 - Source: <https://nodejs.org/>
-- Packaged version: `24.19.0` for Windows x64
+- Packaged version: `24.19.0` for Windows x64 and macOS Apple Silicon
 - License: MIT and bundled third-party notices
 
-The official Node.js `LICENSE` file is included beside the packaged `node.exe`.
+The official Node.js `LICENSE` file is included beside the packaged platform Node executable.
