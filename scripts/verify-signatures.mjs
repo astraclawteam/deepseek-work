@@ -1,9 +1,12 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { basename, join, resolve } from 'node:path'
 
 const repositoryRoot = resolve(import.meta.dirname, '..')
+const require = createRequire(import.meta.url)
+const { authenticodeMetadataScript, parseAuthenticodeMetadata } = require('../build/sign.cjs')
 const expectedPublisher = process.env.EXPECTED_WINDOWS_PUBLISHER ?? '惠州顺视智能科技有限公司'
 const packageVersion = JSON.parse(await readFile(join(repositoryRoot, 'package.json'), 'utf8')).version
 const targets = [
@@ -27,27 +30,19 @@ for (const target of targets) {
 }
 
 function signatureMetadata(filePath) {
-  const escapedPath = filePath.replaceAll("'", "''")
-  const script = [
-    `$signature = Get-AuthenticodeSignature -LiteralPath '${escapedPath}'`,
-    '[pscustomobject]@{',
-    '  Status = [string]$signature.Status',
-    '  SignerSubject = [string]$signature.SignerCertificate.Subject',
-    '  TimestampSubject = [string]$signature.TimeStamperCertificate.Subject',
-    '} | ConvertTo-Json -Compress',
-  ].join('; ')
   const powershell = process.env.SystemRoot
     ? join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
     : 'powershell.exe'
-  return JSON.parse(execFileSync(powershell, [
+  const encodedMetadata = execFileSync(powershell, [
     '-NoProfile',
     '-NonInteractive',
     '-Command',
-    script,
+    authenticodeMetadataScript(filePath),
   ], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 30_000,
     windowsHide: true,
-  }).trim())
+  })
+  return parseAuthenticodeMetadata(encodedMetadata)
 }

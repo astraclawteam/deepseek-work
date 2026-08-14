@@ -370,7 +370,7 @@ function capture(command, args, cwd) {
 }
 
 function runCommand(command, args, cwd, extraEnvironment = {}) {
-  const environment = { ...process.env, ...extraEnvironment }
+  const environment = childEnvironment(extraEnvironment)
   if (process.platform === 'win32' && (command === 'pnpm' || command === 'npm')) {
     const commandLine = [`${command}.cmd`, ...args.map(quoteCommandToken)].join(' ')
     execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', commandLine], {
@@ -382,6 +382,39 @@ function runCommand(command, args, cwd, extraEnvironment = {}) {
     return
   }
   execFileSync(command, args, { cwd, env: environment, stdio: 'inherit', windowsHide: true })
+}
+
+function childEnvironment(extraEnvironment) {
+  const environment = { ...process.env, ...extraEnvironment }
+  const configuredPathValues = Object.entries(extraEnvironment)
+    .filter(([key]) => key.toLowerCase() === 'path')
+    .flatMap(([, value]) => String(value ?? '').split(';'))
+  const inheritedPathValues = Object.entries(process.env)
+    .filter(([key]) => key.toLowerCase() === 'path')
+    .flatMap(([, value]) => String(value ?? '').split(';'))
+  for (const key of Object.keys(environment)) {
+    if (key.toLowerCase() === 'path') delete environment[key]
+  }
+  environment.Path = deduplicatePathValues([
+    ...configuredPathValues,
+    dirname(process.execPath),
+    ...inheritedPathValues,
+  ])
+  return environment
+}
+
+function deduplicatePathValues(values) {
+  const seen = new Set()
+  return values
+    .map(value => value.trim())
+    .filter(Boolean)
+    .filter(value => {
+      const identity = value.toLowerCase()
+      if (seen.has(identity)) return false
+      seen.add(identity)
+      return true
+    })
+    .join(';')
 }
 
 function quoteCommandToken(value) {

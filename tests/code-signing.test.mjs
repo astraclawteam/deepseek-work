@@ -3,7 +3,12 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { default: sign, isSignTarget } = require('../build/sign.cjs')
+const {
+  authenticodeMetadataScript,
+  default: sign,
+  isSignTarget,
+  parseAuthenticodeMetadata,
+} = require('../build/sign.cjs')
 
 describe('Windows code signing scope', () => {
   it('includes the public application and installer executables', () => {
@@ -17,6 +22,20 @@ describe('Windows code signing scope', () => {
     expect(isSignTarget('rg.exe')).toBe(false)
     expect(isSignTarget('OpenConsole.exe')).toBe(false)
     expect(isSignTarget('elevate.exe')).toBe(false)
+  })
+
+  it('builds a syntactically separated PowerShell metadata object', () => {
+    const script = authenticodeMetadataScript("C:\\release\\DeepSeek Work's.exe")
+    expect(script).toContain("-LiteralPath 'C:\\release\\DeepSeek Work''s.exe'")
+    expect(script).toContain('[pscustomobject]@{\n  Status')
+    expect(script).toContain('ToBase64String([Text.Encoding]::UTF8.GetBytes($json))')
+    expect(script).not.toContain('@{;')
+  })
+
+  it('preserves Unicode publisher names across the PowerShell boundary', () => {
+    const metadata = { Status: 'Valid', SignerSubject: 'CN=惠州顺视智能科技有限公司' }
+    const encoded = Buffer.from(JSON.stringify(metadata), 'utf8').toString('base64')
+    expect(parseAuthenticodeMetadata(encoded)).toEqual(metadata)
   })
 
   it('fails closed when a formal release has no signing credential', async () => {

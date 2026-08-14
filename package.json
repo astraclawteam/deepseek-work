@@ -19,10 +19,10 @@
     "generate:assets": "node scripts/generate-assets.mjs",
     "pack:win": "pnpm run prepare:runtime && pnpm run generate:assets && pnpm run build && electron-builder --win --x64 --dir",
     "prepare:runtime": "node scripts/prepare-runtime.mjs",
-    "release:win": "pnpm run dist:win && pnpm run verify:signatures && pnpm run smoke:packaged",
+    "release:win": "node scripts/release-windows.mjs",
     "smoke": "pnpm run generate:assets && pnpm run build && electron . --smoke",
     "smoke:packaged": "node scripts/smoke-packaged.mjs",
-    "test": "vitest run",
+    "test": "vitest run --dir tests",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "verify:signatures": "node scripts/verify-signatures.mjs"
   },

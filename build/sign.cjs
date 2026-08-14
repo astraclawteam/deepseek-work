@@ -37,29 +37,40 @@ function signingConfiguration() {
 }
 
 function signatureMetadata(filePath) {
-  const escapedPath = filePath.replaceAll("'", "''")
   const powershell = process.env.SystemRoot
     ? `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
     : 'powershell.exe'
-  const script = [
-    `$signature = Get-AuthenticodeSignature -LiteralPath '${escapedPath}'`,
-    '[pscustomobject]@{',
-    '  Status = [string]$signature.Status',
-    '  SignerSubject = [string]$signature.SignerCertificate.Subject',
-    '  TimestampSubject = [string]$signature.TimeStamperCertificate.Subject',
-    '} | ConvertTo-Json -Compress',
-  ].join('; ')
-  return JSON.parse(execFileSync(powershell, [
+  const encodedMetadata = execFileSync(powershell, [
     '-NoProfile',
     '-NonInteractive',
     '-Command',
-    script,
+    authenticodeMetadataScript(filePath),
   ], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 30_000,
     windowsHide: true,
-  }).trim())
+  })
+  return parseAuthenticodeMetadata(encodedMetadata)
+}
+
+function authenticodeMetadataScript(filePath) {
+  const escapedPath = filePath.replaceAll("'", "''")
+  return [
+    `$signature = Get-AuthenticodeSignature -LiteralPath '${escapedPath}'`,
+    '$metadata = [pscustomobject]@{',
+    '  Status = [string]$signature.Status',
+    '  SignerSubject = [string]$signature.SignerCertificate.Subject',
+    '  TimestampSubject = [string]$signature.TimeStamperCertificate.Subject',
+    '}',
+    '$json = $metadata | ConvertTo-Json -Compress',
+    '[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))',
+  ].join('\n')
+}
+
+function parseAuthenticodeMetadata(encodedMetadata) {
+  const json = Buffer.from(encodedMetadata.trim(), 'base64').toString('utf8')
+  return JSON.parse(json)
 }
 
 function verifySignedFile(filePath) {
@@ -133,3 +144,5 @@ exports.default = async function sign(configuration) {
 }
 
 exports.isSignTarget = isSignTarget
+exports.authenticodeMetadataScript = authenticodeMetadataScript
+exports.parseAuthenticodeMetadata = parseAuthenticodeMetadata
