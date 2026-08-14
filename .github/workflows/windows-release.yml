@@ -43,6 +43,7 @@ jobs:
           $nodeExecutable = (Get-Command node.exe -ErrorAction Stop).Source
           $nodeDirectory = Split-Path -Parent $nodeExecutable
           $nodeDirectory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "NODEJS_HOME=$nodeDirectory" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           $env:Path = "$nodeDirectory;$env:Path"
           corepack enable
           corepack prepare pnpm@11.7.0 --activate
@@ -106,7 +107,10 @@ jobs:
       - name: Build, sign, and verify Windows release
         shell: powershell
         working-directory: deepseek-work
-        run: pnpm run release:win
+        run: |
+          $env:Path = "$env:NODEJS_HOME;$env:Path"
+          node --version
+          pnpm run release:win
 
       - name: Upload signed Windows artifact
         uses: actions/upload-artifact@v7
