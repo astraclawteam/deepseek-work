@@ -8,6 +8,8 @@ directories:
   output: release
   buildResources: build
 
+electronDist: node_modules/electron/dist
+
 files:
   - dist/**/*
   - src/renderer/**/*
