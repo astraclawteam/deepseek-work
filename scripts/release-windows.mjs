@@ -23,7 +23,7 @@ const stages = [
   [
     'build signed NSIS package',
     join(repositoryRoot, 'node_modules', 'electron-builder', 'out', 'cli', 'cli.js'),
-    ['--win', 'nsis', '--x64', `--config.electronDist=${electronDistribution.path}`],
+    ['--win', 'nsis', '--x64', '--publish', 'never', `--config.electronDist=${electronDistribution.path}`],
   ],
   ['verify Authenticode signatures', join(repositoryRoot, 'scripts', 'verify-signatures.mjs'), []],
   ['smoke packaged application', join(repositoryRoot, 'scripts', 'smoke-packaged.mjs'), []],
