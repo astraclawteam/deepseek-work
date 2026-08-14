@@ -1,7 +1,7 @@
 import { lstatSync, readdirSync, rmdirSync, rmSync } from 'node:fs'
 import { relative, resolve, sep } from 'node:path'
 
-export const RUNTIME_PRUNING_POLICY_VERSION = 3
+export const RUNTIME_PRUNING_POLICY_VERSION = 4
 
 const NODE_PTY_PREBUILD_TARGETS = new Map([
   ['darwin-arm64', 'darwin-arm64'],
@@ -38,6 +38,10 @@ export function runtimePruningReason(relativePath, target = 'win32-x64') {
   const normalized = relativePath.replaceAll('\\', '/').replace(/^\.\//u, '')
   const lower = normalized.toLowerCase()
   if (!lower.startsWith('node_modules/')) return undefined
+
+  if (lower.startsWith('node_modules/.bin/') || lower.includes('/node_modules/.bin/')) {
+    return 'package-manager-metadata'
+  }
 
   const segments = lower.split('/')
   const filename = segments.at(-1) ?? ''
@@ -81,10 +85,19 @@ export function runtimePruningReason(relativePath, target = 'win32-x64') {
 /** Remove classified files from a staged runtime and return an auditable summary. */
 export function pruneRuntimeTree(root, target = 'win32-x64') {
   const resolvedRoot = resolve(root)
-  const before = measureTree(resolvedRoot)
+  const before = measureTree(resolvedRoot, target)
   const removedByReason = new Map()
   let removedFiles = 0
   let removedBytes = 0
+
+  const recordRemoval = (reason, bytes) => {
+    removedFiles += 1
+    removedBytes += bytes
+    const summary = removedByReason.get(reason) ?? { bytes: 0, files: 0 }
+    summary.bytes += bytes
+    summary.files += 1
+    removedByReason.set(reason, summary)
+  }
 
   const visit = current => {
     const entries = readdirSync(current, { withFileTypes: true })
@@ -93,7 +106,14 @@ export function pruneRuntimeTree(root, target = 'win32-x64') {
       const absolutePath = resolve(current, entry.name)
       assertOwnedPath(absolutePath, resolvedRoot)
       const stat = lstatSync(absolutePath)
-      if (stat.isSymbolicLink()) throw new Error(`Runtime pruning refuses a symbolic link: ${absolutePath}`)
+      const relativePath = relative(resolvedRoot, absolutePath).split(sep).join('/')
+      const reason = runtimePruningReason(relativePath, target)
+      if (stat.isSymbolicLink()) {
+        if (reason === undefined) throw new Error(`Runtime pruning refuses a symbolic link: ${absolutePath}`)
+        rmSync(absolutePath, { force: true })
+        recordRemoval(reason, stat.size)
+        continue
+      }
       if (stat.isDirectory()) {
         visit(absolutePath)
         if (readdirSync(absolutePath).length === 0) rmdirSync(absolutePath)
@@ -101,22 +121,15 @@ export function pruneRuntimeTree(root, target = 'win32-x64') {
       }
       if (!stat.isFile()) throw new Error(`Runtime pruning found an unsupported entry: ${absolutePath}`)
 
-      const relativePath = relative(resolvedRoot, absolutePath).split(sep).join('/')
-      const reason = runtimePruningReason(relativePath, target)
       if (reason === undefined) continue
 
       rmSync(absolutePath, { force: true })
-      removedFiles += 1
-      removedBytes += stat.size
-      const summary = removedByReason.get(reason) ?? { bytes: 0, files: 0 }
-      summary.bytes += stat.size
-      summary.files += 1
-      removedByReason.set(reason, summary)
+      recordRemoval(reason, stat.size)
     }
   }
 
   visit(resolvedRoot)
-  const after = measureTree(resolvedRoot)
+  const after = measureTree(resolvedRoot, target)
   return {
     schemaVersion: 1,
     policyVersion: RUNTIME_PRUNING_POLICY_VERSION,
@@ -128,7 +141,7 @@ export function pruneRuntimeTree(root, target = 'win32-x64') {
   }
 }
 
-function measureTree(root) {
+function measureTree(root, target) {
   let bytes = 0
   let files = 0
   const visit = current => {
@@ -136,7 +149,15 @@ function measureTree(root) {
       const absolutePath = resolve(current, entry.name)
       assertOwnedPath(absolutePath, root)
       const stat = lstatSync(absolutePath)
-      if (stat.isSymbolicLink()) throw new Error(`Runtime inventory refuses a symbolic link: ${absolutePath}`)
+      if (stat.isSymbolicLink()) {
+        const relativePath = relative(root, absolutePath).split(sep).join('/')
+        if (runtimePruningReason(relativePath, target) === undefined) {
+          throw new Error(`Runtime inventory refuses a symbolic link: ${absolutePath}`)
+        }
+        bytes += stat.size
+        files += 1
+        continue
+      }
       if (stat.isDirectory()) visit(absolutePath)
       else if (stat.isFile()) {
         bytes += stat.size

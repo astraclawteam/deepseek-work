@@ -18,6 +18,8 @@ describe('runtime pruning policy', () => {
     expect(runtimePruningReason('node_modules/@img/sharp-wasm32/lib/sharp.node.wasm')).toBe('non-target-native-payload')
     expect(runtimePruningReason('node_modules/pkg/tests/fixture.js')).toBe('development-directory')
     expect(runtimePruningReason('node_modules/pkg/docs/guide.md')).toBe('development-directory')
+    expect(runtimePruningReason('node_modules/.bin/anthropic-ai-sdk')).toBe('package-manager-metadata')
+    expect(runtimePruningReason('node_modules/pkg/node_modules/.bin/helper')).toBe('package-manager-metadata')
     expect(runtimePruningReason('node_modules/test/index.js')).toBeUndefined()
     expect(runtimePruningReason('node_modules/yaml/dist/doc/directives.js')).toBeUndefined()
   })
