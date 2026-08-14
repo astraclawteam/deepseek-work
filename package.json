@@ -1,0 +1,27 @@
+{
+  "name": "deepseek-work",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A supervised Electron desktop shell for DeepSeek Harness.",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/main.js",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "pnpm run typecheck && pnpm run test",
+    "dev": "pnpm run build && electron .",
+    "smoke": "pnpm run build && electron . --smoke",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "electron": "43.4.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10"
+  }
+}
